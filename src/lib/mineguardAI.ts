@@ -95,26 +95,6 @@ export function riskClassToStatus(risk: RiskClass): "normal" | "warning" | "dang
   return "normal";
 }
 
-const ADC_MAX = 4095;
-// Training range ceilings from MineGuard_AI/MineGuard_Cleaned.csv.
-const MQ4_PPM_MAX = 4797;
-const MQ135_PPM_MAX = 679;
-
-// The field wearable's MQ-4/MQ-135 sensors report raw 12-bit ADC counts
-// (0-4095), not calibrated ppm — real calibration needs a per-sensor Ro
-// baseline and the datasheet's Rs/Ro curve, which hasn't been done yet. Until
-// then, scale the raw count into the ppm range the model was trained on so
-// it's a plausible model input rather than an out-of-range ADC count
-// mislabeled as ppm. Predictions built on this are an approximation, not a
-// calibrated reading.
-export function approxMethanePpmFromAdc(raw: number): number {
-  return Math.round((Math.min(ADC_MAX, Math.max(0, raw)) / ADC_MAX) * MQ4_PPM_MAX);
-}
-
-export function approxGasPpmFromAdc(raw: number): number {
-  return Math.round((Math.min(ADC_MAX, Math.max(0, raw)) / ADC_MAX) * MQ135_PPM_MAX);
-}
-
 // No accelerometer on the current wearable (mineg.cpp) — this stands in near
 // the training data's stationary baseline until vibration-sensing hardware
 // is added.

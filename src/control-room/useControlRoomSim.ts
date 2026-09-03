@@ -1,52 +1,124 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GROUP_DEFS, LIVE_DEVICE_ID, LIVE_GROUP_ID, SIM_GROUP_ID, beep, makeGroup, randRange, type Alert, type Group, type HistoryPoint } from "./mockData";
+import { GROUP_DEFS, LIVE_DEVICE_ID, LIVE_GROUP_ID, SIM_GROUP_ID, beep, makeGroup, randRange, type Alert, type Group, type GasAlert, type HistoryPoint } from "./mockData";
 import { useBays } from "./useBays";
-import { mq135ToAirQuality, mq4ToMethanePercent, useDeviceReadings, type DeviceReading } from "./useDeviceReadings";
 import {
-  approxGasPpmFromAdc,
-  approxMethanePpmFromAdc,
-  predictRisk,
-  riskClassToStatus,
-  VIBRATION_PLACEHOLDER_G,
-  type AiRiskFeatures,
-  type AiRiskResult,
-} from "../lib/mineguardAI";
+  buildGasReading,
+  mq135ToAirQuality,
+  mq4ToMethanePercent,
+  useDeviceReadings,
+  type DeviceReading,
+  type GasReading,
+  type GasSeverity,
+} from "./useDeviceReadings";
+import { predictRisk, riskClassToStatus, VIBRATION_PLACEHOLDER_G, type AiRiskFeatures, type AiRiskResult } from "../lib/mineguardAI";
 
 export type ManualField = "methane" | "mq135Raw" | "temp" | "humidity" | "pressure" | "soundDb" | "vibrationG";
 
 const UNCALIBRATED_NOTE =
   "AI input is approximate: the wearable's MQ gas sensors report raw, uncalibrated ADC counts (scaled into the model's ppm range), and it has no accelerometer, so vibration is a placeholder.";
 
-// The simulated groups' `methane` (%) and `mq135Raw` fields are display units
-// invented for the mock dashboard (see mockData.ts), not real concentrations
-// or ADC counts — so, unlike the live device, they get their own mapping into
-// the model's ppm scale. It's calibrated against MineGuard_Cleaned.csv's
-// per-class ranges so a normal walk value lands in the Safe band (mq4
-// 34-236ppm, mq135 21-104ppm) and only a spike value lands in the
-// High/Critical band, instead of the model seeing an arbitrary point outside
-// anything it was trained on.
-function simMethaneToPpm(methanePct: number): number {
+// Shared by simulated AND live groups — both report methane/air-quality on
+// the same 0-4% / 0-100 display scales (see useDeviceReadings.ts for the
+// live path), so both must go through the exact same ppm mapping. Using two
+// different formulas for "the same number" was the bug: a live 1.15% and a
+// simulated 1.6% classified nothing alike because they took different paths
+// into the model. Calibrated against MineGuard_Cleaned.csv's per-class
+// ranges so a normal/resting value lands in the Safe band (mq4 34-236ppm,
+// mq135 21-104ppm) and only a real spike lands in the High/Critical band,
+// instead of the model seeing an arbitrary point outside anything it was
+// trained on.
+function methanePercentToPpm(methanePct: number): number {
   const pct = Math.min(4, Math.max(0, methanePct));
   return Math.round(pct <= 1.4 ? 34 + pct * 140 : 230 + (pct - 1.4) * 1800);
 }
-function simMq135RawToPpm(raw: number): number {
-  return Math.round(20 + (Math.min(900, Math.max(0, raw)) / 900) * 84);
+// Takes a 0-1 fraction of "how far toward max gas reading" rather than a
+// group-type-specific unit, so simulated groups (fraction = manually-editable
+// mq135Raw / 900) and the live device (fraction = baseline-relative air
+// quality / 100) both land on the exact same ppm curve from the same concept,
+// not two formulas that happen to produce similar-looking numbers.
+function mq135FractionToPpm(fraction: number): number {
+  return Math.round(20 + Math.min(1, Math.max(0, fraction)) * 84);
+}
+
+// A single raw ADC sample from these gas sensors is noisy enough on its own
+// to swing the displayed reading (and the AI classification built on it)
+// even when nothing real changed — the on-device Serial status already
+// averages 8 quick reads and requires 3 consecutive agreeing readings before
+// it commits to a status; the dashboard had neither, reacting instantly to
+// every single row. Averaging the last few readings here brings the two in
+// line. ~6s of lag at the sender's 2s cycle — enough to reject one noisy
+// sample without meaningfully delaying a genuine sustained rise.
+const GAS_SMOOTHING_SAMPLES = 3;
+
+function recentAverage(history: DeviceReading[], key: "mq4" | "mq135"): number | null {
+  const values = history
+    .map((r) => r[key])
+    .filter((v): v is number => v != null)
+    .slice(-GAS_SMOOTHING_SAMPLES);
+  if (values.length === 0) return null;
+  return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+// Combines both sensors' HONEST readings (relative response + trend +
+// baseline validity — no ppm, no AI) into one severity + a plain-language
+// list of what drove it, most significant first. This is the PRIMARY safety
+// signal: the AI model (below) is a separate, secondary opinion that still
+// necessarily receives an approximated ppm-shaped input, so it must not be
+// the only thing deciding whether a gas condition is flagged.
+const GAS_SEVERITY_RANK: Record<GasSeverity, number> = { NORMAL: 0, ELEVATED: 1, HIGH: 2, "VERY HIGH": 3 };
+
+function buildGasAlert(mq4: GasReading, mq135: GasReading): GasAlert {
+  const severity = GAS_SEVERITY_RANK[mq4.severity] >= GAS_SEVERITY_RANK[mq135.severity] ? mq4.severity : mq135.severity;
+  const factors: string[] = [];
+  if (mq4.severity !== "NORMAL") factors.push(`MQ-4 response +${mq4.relativePercent}% above baseline`);
+  if (mq4.trend === "RISING" || mq4.trend === "RAPIDLY RISING") factors.push(`MQ-4 trend ${mq4.trend.toLowerCase()}`);
+  if (mq135.severity !== "NORMAL") factors.push(`MQ-135 response +${mq135.relativePercent}% above baseline`);
+  if (mq135.trend === "RISING" || mq135.trend === "RAPIDLY RISING") factors.push(`MQ-135 trend ${mq135.trend.toLowerCase()}`);
+  if (mq4.baselineValid === false) factors.push("MQ-4 baseline calibration invalid — response % may be unreliable");
+  if (mq135.baselineValid === false) factors.push("MQ-135 baseline calibration invalid — response % may be unreliable");
+  if (factors.length === 0) factors.push("Both gas sensors reading within normal range of their baseline");
+  return { severity, factors };
 }
 
 function mapLiveReadingToGroup(base: Group, latest: DeviceReading, history: DeviceReading[]): Group {
-  const methane = latest.mq4 != null ? mq4ToMethanePercent(latest.mq4) : base.methane;
-  const airQuality = latest.mq135 != null ? mq135ToAirQuality(latest.mq135) : base.airQuality;
+  const mq4Smoothed = recentAverage(history, "mq4");
+  const mq135Smoothed = recentAverage(history, "mq135");
+  const methane = mq4Smoothed != null ? mq4ToMethanePercent(mq4Smoothed, latest.mq4Baseline ?? undefined) : base.methane;
+  const airQuality =
+    mq135Smoothed != null ? mq135ToAirQuality(mq135Smoothed, latest.mq135Baseline ?? undefined) : base.airQuality;
   const mq135Raw = latest.mq135 ?? base.mq135Raw;
   const temp = latest.temp ?? base.temp;
   const humidity = latest.humidity ?? base.humidity;
   const pressure = latest.pressure ?? base.pressure;
   const soundDb = latest.db ?? base.soundDb;
-  const status = latest.sos ? "danger" : methane > 2.0 ? "danger" : methane > 1.4 ? "warning" : "normal";
+
+  // Honest data: same smoothed value driving severity/trend, but `raw` shows
+  // the actual most recent instant reading, not the smoothed one.
+  const mq4Gas: GasReading = {
+    ...buildGasReading(mq4Smoothed, latest.mq4Baseline, latest.mq4BaselineValid, history, "mq4"),
+    raw: latest.mq4,
+  };
+  const mq135Gas: GasReading = {
+    ...buildGasReading(mq135Smoothed, latest.mq135Baseline, latest.mq135BaselineValid, history, "mq135"),
+    raw: latest.mq135,
+  };
+  const gasAlert = buildGasAlert(mq4Gas, mq135Gas);
+
+  const status = latest.sos
+    ? "danger"
+    : gasAlert.severity === "HIGH" || gasAlert.severity === "VERY HIGH"
+      ? "danger"
+      : gasAlert.severity === "ELEVATED"
+        ? "warning"
+        : "normal";
   const lastCheckin = Math.max(0, Math.round((Date.now() - new Date(latest.createdAt).getTime()) / 1000));
   const historyWithGas = history.filter((r) => r.mq4 != null);
   const historyPoints: HistoryPoint[] =
     historyWithGas.length > 0
-      ? historyWithGas.map((r, i) => ({ t: i, methane: mq4ToMethanePercent(r.mq4 as number) }))
+      ? historyWithGas.map((r, i) => ({
+          t: i,
+          methane: mq4ToMethanePercent(r.mq4 as number, r.mq4Baseline ?? undefined),
+        }))
       : base.history;
 
   return {
@@ -60,6 +132,8 @@ function mapLiveReadingToGroup(base: Group, latest: DeviceReading, history: Devi
     soundDb,
     vibrationG: VIBRATION_PLACEHOLDER_G,
     status: status as Group["status"],
+    liveGas: { mq4: mq4Gas, mq135: mq135Gas },
+    gasAlert,
     history: historyPoints,
     lastCheckin,
     live: true,
@@ -135,12 +209,22 @@ export function useControlRoomSim(soundOn: boolean) {
   // returns and classify data that's no longer meaningful.
   useEffect(() => {
     if (!liveReading || !deviceLive) return;
+    // Same conversion path as every simulated group (see methanePercentToPpm/
+    // mq135FractionToPpm above): compute the live device's display-scale
+    // methane%/air-quality-index first, then feed those through the exact
+    // same shared ppm mapping — not a separate ADC-derived formula. Averaged
+    // over the last few readings (see recentAverage above) so the model
+    // isn't classifying off a single noisy ADC sample.
+    const mq4Smoothed = recentAverage(liveHistory, "mq4");
+    const mq135Smoothed = recentAverage(liveHistory, "mq135");
+    const methane = mq4Smoothed != null ? mq4ToMethanePercent(mq4Smoothed, liveReading.mq4Baseline ?? undefined) : 0;
+    const airQuality = mq135Smoothed != null ? mq135ToAirQuality(mq135Smoothed, liveReading.mq135Baseline ?? undefined) : 0;
     const features: AiRiskFeatures = {
       temperature_c: liveReading.temp ?? 25,
       humidity_pct: liveReading.humidity ?? 50,
       pressure_hpa: liveReading.pressure ?? 1000,
-      mq4_ch4_ppm: liveReading.mq4 != null ? approxMethanePpmFromAdc(liveReading.mq4) : 0,
-      mq135_gas_ppm: liveReading.mq135 != null ? approxGasPpmFromAdc(liveReading.mq135) : 0,
+      mq4_ch4_ppm: methanePercentToPpm(methane),
+      mq135_gas_ppm: mq135FractionToPpm(airQuality / 100),
       sound_db: liveReading.db ?? 40,
       vibration_g: VIBRATION_PLACEHOLDER_G,
     };
@@ -155,7 +239,7 @@ export function useControlRoomSim(soundOn: boolean) {
     return () => {
       cancelled = true;
     };
-  }, [liveReading, deviceLive]);
+  }, [liveReading, deviceLive, liveHistory]);
 
   // Run every simulated group's current readings through the same model on
   // each tick, so the whole dashboard reflects real model output rather than
@@ -170,8 +254,8 @@ export function useControlRoomSim(soundOn: boolean) {
           temperature_c: g.temp,
           humidity_pct: g.humidity,
           pressure_hpa: g.pressure,
-          mq4_ch4_ppm: simMethaneToPpm(g.methane),
-          mq135_gas_ppm: simMq135RawToPpm(g.mq135Raw),
+          mq4_ch4_ppm: methanePercentToPpm(g.methane),
+          mq135_gas_ppm: mq135FractionToPpm(g.mq135Raw / 900),
           sound_db: g.soundDb ?? 55,
           vibration_g: g.vibrationG,
         };
@@ -234,8 +318,8 @@ export function useControlRoomSim(soundOn: boolean) {
       setSimGroups((prev) => {
         const next = prev.map((g) => {
           if (g.id === LIVE_GROUP_ID) {
-            const liveMq4 = deviceLiveRef.current ? liveReadingRef.current?.mq4 : null;
-            siteSum += liveMq4 != null ? mq4ToMethanePercent(liveMq4) : g.methane;
+            const liveReading = deviceLiveRef.current ? liveReadingRef.current : null;
+            siteSum += liveReading?.mq4 != null ? mq4ToMethanePercent(liveReading.mq4, liveReading.mq4Baseline ?? undefined) : g.methane;
             return g;
           }
           if (g.id === SIM_GROUP_ID && manualModeRef.current) {

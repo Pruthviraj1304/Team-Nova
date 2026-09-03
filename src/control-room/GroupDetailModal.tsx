@@ -74,7 +74,7 @@ export function GroupDetailModal({
   const round = (n: number, decimals: number) => Math.round(n * 10 ** decimals) / 10 ** decimals;
   const manualFields: ManualFieldDef[] = [
     { key: "methane", label: "Methane (%)", value: round(g.methane, 2), step: 0.1, min: 0, max: 5, suffix: "%" },
-    // Capped at 900, not the sensor's full 12-bit range — simMq135RawToPpm below clamps there too, so anything higher would have no further effect.
+    // Capped at 900, not the sensor's full 12-bit range — useControlRoomSim's mq135FractionToPpm (fed g.mq135Raw / 900) clamps there too, so anything higher would have no further effect.
     { key: "mq135Raw", label: "Air quality (raw)", value: round(g.mq135Raw, 0), step: 10, min: 0, max: 900, suffix: "" },
     { key: "temp", label: "Temperature (°C)", value: round(g.temp, 1), step: 0.5, min: -20, max: 80, suffix: "°C" },
     { key: "humidity", label: "Humidity (%)", value: round(g.humidity, 1), step: 1, min: 0, max: 100, suffix: "%" },
@@ -102,9 +102,13 @@ export function GroupDetailModal({
     setIsEditing(false);
   }
 
+  // Live groups show the honest gas sensor panel (below) instead of these
+  // two rows — see g.liveGas. Simulated groups have no real sensor behind
+  // them at all, so their existing 0-4%/0-100 display convention is kept
+  // as-is here (out of scope for the "remove the fake conversion" fix,
+  // which was about the live device specifically).
   const metrics: [string, string][] = [
-    ["Methane", `${g.methane.toFixed(2)}%`],
-    ["Air quality index", String(g.airQuality)],
+    ...(g.liveGas ? [] : ([["Methane", `${g.methane.toFixed(2)}%`], ["Air quality index", String(g.airQuality)]] as [string, string][])),
     ["Temperature", `${g.temp}°C`],
     ["Humidity", `${g.humidity.toFixed(0)}%`],
     ["Atmospheric pressure", `${g.pressure.toFixed(0)} hPa`],
@@ -253,6 +257,71 @@ export function GroupDetailModal({
                 </AreaChart>
               </ResponsiveContainer>
 
+              {g.liveGas && (
+                <div className="mb-3.5 space-y-2.5">
+                  {(
+                    [
+                      ["mq4", "MQ-4 (Methane) Sensor"],
+                      ["mq135", "MQ-135 (Gas/Smoke) Sensor"],
+                    ] as const
+                  ).map(([key, label]) => {
+                    const gas = g.liveGas![key];
+                    const sevColor =
+                      gas.severity === "VERY HIGH" || gas.severity === "HIGH"
+                        ? colors.red
+                        : gas.severity === "ELEVATED"
+                          ? colors.amber
+                          : colors.green;
+                    return (
+                      <div key={key} className="rounded-md border p-3" style={{ borderColor: sevColor }}>
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold uppercase tracking-wide">{label}</span>
+                          <span
+                            className="rounded-full px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide"
+                            style={{ background: `${sevColor}22`, color: sevColor }}
+                          >
+                            {gas.severity}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[11px]">
+                          <div className="flex justify-between">
+                            <span className="text-[var(--dash-text-muted)]">Raw ADC</span>
+                            <span className="font-semibold">{gas.raw ?? "—"}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[var(--dash-text-muted)]">Baseline</span>
+                            <span className="font-semibold">{gas.baseline != null ? Math.round(gas.baseline) : "—"}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[var(--dash-text-muted)]">Relative response</span>
+                            <span className="font-semibold">+{gas.relativePercent}%</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[var(--dash-text-muted)]">Trend</span>
+                            <span className="font-semibold">{gas.trend}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[var(--dash-text-muted)]">Baseline status</span>
+                            <span className="font-semibold" style={{ color: gas.baselineValid === false ? colors.red : undefined }}>
+                              {gas.baselineValid == null ? "—" : gas.baselineValid ? "VALID" : "INVALID"}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-[var(--dash-text-muted)]">Concentration</span>
+                            <span className="font-semibold">NOT CALIBRATED</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="text-[10px] text-[var(--dash-text-muted)]">
+                    "Relative response" is how far this reading sits above the sensor's own measured clean-air baseline — it is not a gas
+                    concentration. This hardware has not been calibrated against a real methane/gas reference, so no ppm or % concentration
+                    is shown.
+                  </div>
+                </div>
+              )}
+
               {manualActive ? (
                 <>
                   <div className="mb-2.5 grid grid-cols-2 gap-2.5">
@@ -297,12 +366,50 @@ export function GroupDetailModal({
             </>
           )}
 
+          {g.gasAlert && (
+            <div
+              className="mt-4.5 rounded-md border p-3"
+              style={{
+                borderColor: statusColor(
+                  colors,
+                  g.gasAlert.severity === "HIGH" || g.gasAlert.severity === "VERY HIGH"
+                    ? "danger"
+                    : g.gasAlert.severity === "ELEVATED"
+                      ? "warning"
+                      : "normal",
+                ),
+              }}
+            >
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[var(--dash-text-muted)]">
+                  <AlertTriangle size={13} />
+                  Gas Alert — sensor-based, independent of AI
+                </div>
+                <span
+                  className="rounded-full px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide"
+                  style={{
+                    background: `${statusColor(colors, g.gasAlert.severity === "HIGH" || g.gasAlert.severity === "VERY HIGH" ? "danger" : g.gasAlert.severity === "ELEVATED" ? "warning" : "normal")}22`,
+                    color: statusColor(colors, g.gasAlert.severity === "HIGH" || g.gasAlert.severity === "VERY HIGH" ? "danger" : g.gasAlert.severity === "ELEVATED" ? "warning" : "normal"),
+                  }}
+                >
+                  {g.gasAlert.severity}
+                </span>
+              </div>
+              <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[var(--dash-text-muted)]">Primary factors</div>
+              <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-[var(--dash-text-muted)]">
+                {g.gasAlert.factors.map((f) => (
+                  <li key={f}>{f}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {g.aiRisk && (
             <div className="mt-4.5 rounded-md border p-3" style={{ borderColor: statusColor(colors, riskClassToStatus(g.aiRisk.status)) }}>
               <div className="mb-1.5 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[var(--dash-text-muted)]">
                   <BrainCircuit size={13} />
-                  MineGuard V2 assessment
+                  MineGuard V2 assessment{g.liveGas ? " — secondary, AI model" : ""}
                 </div>
                 <span
                   className="rounded-full px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide"

@@ -1,4 +1,5 @@
 import type { AiRiskResult } from "../lib/mineguardAI";
+import type { GasReading } from "./useDeviceReadings";
 
 export type GroupStatus = "normal" | "warning" | "danger";
 
@@ -41,6 +42,18 @@ export interface Group {
   aiRisk: AiRiskResult | null;
   /** Set for the live hardware group: explains why its AI input isn't a calibrated reading. */
   aiNote: string | null;
+  /** Honest raw/baseline/relative-response gas data — set only for the live hardware group; null for simulated groups (which have no real sensor behind them at all). */
+  liveGas: { mq4: GasReading; mq135: GasReading } | null;
+  /** Rule-based severity from liveGas alone (relative response + trend + persistence) — independent of the AI model, which still receives an approximated input. Null for simulated groups. */
+  gasAlert: GasAlert | null;
+}
+
+export type GasAlertSeverity = "NORMAL" | "ELEVATED" | "HIGH" | "VERY HIGH";
+
+export interface GasAlert {
+  severity: GasAlertSeverity;
+  /** Plain-language reasons this severity was reached, most significant first — e.g. "MQ-4 response +158% above baseline". */
+  factors: string[];
 }
 
 export type BayState = "charging" | "full" | "empty";
@@ -140,6 +153,8 @@ export function makeGroup(def: (typeof GROUP_DEFS)[number], i: number): Group {
     vibrationG: randRange(0.05, 0.22),
     aiRisk: null,
     aiNote: null,
+    liveGas: null,
+    gasAlert: null,
   };
 }
 

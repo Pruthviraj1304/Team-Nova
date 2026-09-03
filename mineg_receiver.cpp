@@ -10,10 +10,16 @@
 //      even when WiFi/Supabase is unavailable.
 //
 // Expected packet formats (see mineg.cpp):
-//   "2026-09-03 10:15:22,MG-01,23.50,45.20,987.30,512,340,42.10,NORMAL"
+//   "2026-09-03 10:15:22,MG-01,23.50,45.20,987.30,512,340,42.10,NORMAL,2180,1650,1,1"
 //     (telemetry, every 2s — leading field is the sender's NTP-synced
 //     timestamp, used only for its own SD log; we ignore it here since
-//     Supabase stamps its own created_at on insert)
+//     Supabase stamps its own created_at on insert. Trailing four fields are
+//     this unit's own measured clean-air baselines for MQ135/MQ4, and
+//     whether each one passed its sanity checks (1/0) — forwarded as-is so
+//     the dashboard scales against the device's real baseline instead of a
+//     guessed constant, and knows whether to trust it. None of this is a
+//     calibrated gas concentration — see mineg.cpp's MQ Gas Sensor
+//     Configuration section for why.)
 //   "SOS_ALERT:MG-01"                                 (button pressed)
 //   "SOS_CLEARED:MG-01"                                (button released)
 //
@@ -28,10 +34,7 @@
 #include <HTTPClient.h>
 
 // ---------------- WiFi & Supabase Configuration ----------------
-// Fill WIFI_SSID/WIFI_PASSWORD in before flashing — kept out of source
-// control. SUPABASE_ANON_KEY is a public/publishable client key protected by
-// Row Level Security on the server side, so it's safe to ship in firmware —
-// see the same project's .env.local (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).
+// Same project as the web app's .env.local (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).
 const char* WIFI_SSID = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* SUPABASE_URL = "https://oagikmfgjbuttqidznsm.supabase.co";
@@ -154,8 +157,13 @@ String csvField(const String& packet, int index) {
 }
 
 // POSTs one row into public.device_readings via the Supabase REST API.
+// mq135BaselineValid/mq4BaselineValid are nullable: true/false once telemetry
+// has reported them, unset (sent as null) for SOS packets, which carry no
+// sensor data at all.
 void postReading(const String& deviceId, const String& temp, const String& hum, const String& pres,
-                  const String& mq135, const String& mq4, const String& db, bool sos) {
+                  const String& mq135, const String& mq4, const String& db, bool sos,
+                  const String& mq135Baseline, const String& mq4Baseline,
+                  const String& mq135BaselineValid, const String& mq4BaselineValid) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi not connected, dropping reading.");
     return;
@@ -180,6 +188,12 @@ void postReading(const String& deviceId, const String& temp, const String& hum, 
   body += mq135.length() ? ",\"mq135\":" + mq135 : ",\"mq135\":null";
   body += mq4.length() ? ",\"mq4\":" + mq4 : ",\"mq4\":null";
   body += db.length() ? ",\"db\":" + db : ",\"db\":null";
+  body += mq135Baseline.length() ? ",\"mq135_baseline\":" + mq135Baseline : ",\"mq135_baseline\":null";
+  body += mq4Baseline.length() ? ",\"mq4_baseline\":" + mq4Baseline : ",\"mq4_baseline\":null";
+  // "1"/"0" from the packet -> real JSON booleans, not bare digits, so the
+  // boolean columns don't depend on PostgREST's implicit int->bool casting.
+  body += mq135BaselineValid.length() ? ",\"mq135_baseline_valid\":" + String(mq135BaselineValid == "1" ? "true" : "false") : ",\"mq135_baseline_valid\":null";
+  body += mq4BaselineValid.length() ? ",\"mq4_baseline_valid\":" + String(mq4BaselineValid == "1" ? "true" : "false") : ",\"mq4_baseline_valid\":null";
   body += String(",\"sos\":") + (sos ? "true" : "false");
   body += "}";
 
@@ -187,6 +201,12 @@ void postReading(const String& deviceId, const String& temp, const String& hum, 
   Serial.printf("Supabase POST -> %d\n", status);
   if (status <= 0) {
     Serial.println(http.errorToString(status));
+  } else if (status >= 400) {
+    // A non-2xx HTTP status (e.g. 400 for a missing/misnamed column, 401/403
+    // for an RLS or key problem) has a JSON error body explaining exactly
+    // why — print it instead of leaving that status code to be guessed at.
+    Serial.print("Supabase error body: ");
+    Serial.println(http.getString());
   }
   http.end();
 }
@@ -199,7 +219,7 @@ void handlePacket(const String& packet) {
     String deviceId = packet.substring(strlen("SOS_ALERT:"));
     lastStatus = "EMERGENCY";
     deviceSosActive = true;
-    postReading(deviceId, "", "", "", "", "", "", true);
+    postReading(deviceId, "", "", "", "", "", "", true, "", "", "", "");
     return;
   }
 
@@ -207,15 +227,18 @@ void handlePacket(const String& packet) {
     String deviceId = packet.substring(strlen("SOS_CLEARED:"));
     lastStatus = "CLEARED";
     deviceSosActive = false;
-    postReading(deviceId, "", "", "", "", "", "", false);
+    postReading(deviceId, "", "", "", "", "", "", false, "", "", "", "");
     return;
   }
 
-  // Telemetry: "timestamp,DEVICE_ID,temp,hum,pres,mq135,mq4,db,STATUS" —
-  // index 0 (the sender's own NTP timestamp) and the trailing STATUS field
+  // Telemetry: "timestamp,DEVICE_ID,temp,hum,pres,mq135,mq4,db,STATUS,mq135Baseline,mq4Baseline,mq135BaselineValid,mq4BaselineValid" —
+  // index 0 (the sender's own NTP timestamp) and the STATUS field (index 8)
   // are both ignored here: Supabase stamps its own created_at on insert, and
   // the sos flag we forward comes from deviceSosActive (set by the SOS
-  // packets above), not from this field.
+  // packets above), not from this field. The trailing four fields are the
+  // sender's own measured clean-air baselines and whether each passed its
+  // sanity checks, forwarded as-is so the dashboard always scales against
+  // this device's real, current baseline and knows whether to trust it.
   String deviceId = csvField(packet, 1);
   if (deviceId.length() == 0) {
     Serial.println("Unrecognized packet, ignoring.");
@@ -228,7 +251,11 @@ void handlePacket(const String& packet) {
   String mq135 = csvField(packet, 5);
   String mq4 = csvField(packet, 6);
   String db = csvField(packet, 7);
-  postReading(deviceId, temp, hum, pres, mq135, mq4, db, deviceSosActive);
+  String mq135Baseline = csvField(packet, 9);
+  String mq4Baseline = csvField(packet, 10);
+  String mq135BaselineValid = csvField(packet, 11);
+  String mq4BaselineValid = csvField(packet, 12);
+  postReading(deviceId, temp, hum, pres, mq135, mq4, db, deviceSosActive, mq135Baseline, mq4Baseline, mq135BaselineValid, mq4BaselineValid);
 }
 
 void setup() {

@@ -51,7 +51,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signUp(email: string, password: string): Promise<AuthResult> {
     if (!supabase) return { error: "Supabase is not configured." };
     const { data, error } = await supabase.auth.signUp({ email, password });
-    return { error: error?.message ?? null, signedIn: Boolean(data.session) };
+    // Supabase's own error text ("User already registered") directly confirms
+    // an email is taken — a classic account-enumeration leak. Soften it so a
+    // failed signup doesn't explicitly confirm the account exists.
+    // ponytail: this only hides the wording; a prober can still distinguish
+    // "existing email" (errors) from "new email" (succeeds) by outcome alone.
+    // Closing that fully needs a server-side proxy that responds identically
+    // either way — out of scope here.
+    const message = error?.message?.toLowerCase().includes("already registered")
+      ? "Unable to create an account with these details. If you already have one, try signing in instead."
+      : (error?.message ?? null);
+    return { error: message, signedIn: Boolean(data.session) };
   }
 
   async function signOut() {

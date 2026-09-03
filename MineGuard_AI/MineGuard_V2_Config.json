@@ -1,0 +1,21 @@
+{
+    "model": "Random Forest",
+    "version": "MineGuard V2",
+    "critical_probability_threshold": 0.4,
+    "classes": {
+        "0": "Critical Danger",
+        "1": "High Risk",
+        "2": "Moderate Risk",
+        "3": "Safe"
+    },
+    "features": [
+        "temperature_c",
+        "humidity_pct",
+        "pressure_hpa",
+        "mq4_ch4_ppm",
+        "mq135_gas_ppm",
+        "sound_db",
+        "vibration_g"
+    ],
+    "safety_policy": "If Critical Danger probability >= threshold, classify as Critical Danger"
+}

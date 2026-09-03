@@ -1,0 +1,68 @@
+Sensor,Value,Critical_Probability_%,High_Probability_%,Moderate_Probability_%,Safe_Probability_%,ML_Prediction,V2_Prediction
+temperature_c,20.0,1.0,0.0,0.0,99.0,Safe,Safe
+temperature_c,25.0,0.0,0.0,0.0,100.0,Safe,Safe
+temperature_c,30.0,9.0,10.0,1.0,80.0,Safe,Safe
+temperature_c,35.0,11.0,11.0,1.0,77.0,Safe,Safe
+temperature_c,40.0,12.0,11.0,1.0,76.0,Safe,Safe
+temperature_c,45.0,20.0,7.0,1.0,72.0,Safe,Safe
+temperature_c,50.0,20.0,7.0,1.0,72.0,Safe,Safe
+temperature_c,55.0,20.0,7.0,1.0,72.0,Safe,Safe
+humidity_pct,30.0,8.0,8.0,0.0,84.0,Safe,Safe
+humidity_pct,40.0,8.0,8.0,0.0,84.0,Safe,Safe
+humidity_pct,50.0,4.0,1.0,0.0,95.0,Safe,Safe
+humidity_pct,60.0,0.0,0.0,0.0,100.0,Safe,Safe
+humidity_pct,70.0,0.0,0.0,0.0,100.0,Safe,Safe
+humidity_pct,80.0,0.0,1.0,3.0,96.0,Safe,Safe
+humidity_pct,90.0,0.0,8.0,28.0,64.0,Safe,Safe
+humidity_pct,95.0,0.0,7.0,29.0,64.0,Safe,Safe
+pressure_hpa,995.0,5.0,7.0,1.0,87.0,Safe,Safe
+pressure_hpa,1000.0,5.0,7.0,1.0,87.0,Safe,Safe
+pressure_hpa,1005.0,3.0,6.0,0.0,91.0,Safe,Safe
+pressure_hpa,1010.0,0.0,0.0,0.0,100.0,Safe,Safe
+pressure_hpa,1015.0,0.0,0.0,0.0,100.0,Safe,Safe
+pressure_hpa,1020.0,0.0,0.0,0.0,100.0,Safe,Safe
+mq4_ch4_ppm,50.0,0.0,0.0,0.0,100.0,Safe,Safe
+mq4_ch4_ppm,100.0,0.0,0.0,0.0,100.0,Safe,Safe
+mq4_ch4_ppm,200.0,0.0,0.0,0.0,100.0,Safe,Safe
+mq4_ch4_ppm,300.0,19.0,19.0,0.0,62.0,Safe,Safe
+mq4_ch4_ppm,500.0,20.0,21.0,0.0,59.0,Safe,Safe
+mq4_ch4_ppm,750.0,34.0,30.0,0.0,36.0,Safe,Safe
+mq4_ch4_ppm,1000.0,43.0,31.0,0.0,26.0,Critical Danger,Critical Danger
+mq4_ch4_ppm,1500.0,55.0,31.0,0.0,14.0,Critical Danger,Critical Danger
+mq4_ch4_ppm,2000.0,60.0,27.0,0.0,13.0,Critical Danger,Critical Danger
+mq4_ch4_ppm,2500.0,70.0,17.0,0.0,13.0,Critical Danger,Critical Danger
+mq4_ch4_ppm,3000.0,78.0,9.0,0.0,13.0,Critical Danger,Critical Danger
+mq4_ch4_ppm,4000.0,78.0,9.0,0.0,13.0,Critical Danger,Critical Danger
+mq4_ch4_ppm,4500.0,78.0,9.0,0.0,13.0,Critical Danger,Critical Danger
+mq135_gas_ppm,40.0,0.0,0.0,0.0,100.0,Safe,Safe
+mq135_gas_ppm,80.0,0.0,0.0,0.0,100.0,Safe,Safe
+mq135_gas_ppm,100.0,7.0,8.0,0.0,85.0,Safe,Safe
+mq135_gas_ppm,150.0,28.0,21.0,0.0,51.0,Safe,Safe
+mq135_gas_ppm,200.0,25.0,25.0,5.0,45.0,Safe,Safe
+mq135_gas_ppm,300.0,26.0,26.0,5.0,43.0,Safe,Safe
+mq135_gas_ppm,400.0,27.0,35.0,0.0,38.0,Safe,Safe
+mq135_gas_ppm,500.0,29.0,33.0,0.0,38.0,Safe,Safe
+mq135_gas_ppm,600.0,31.0,31.0,0.0,38.0,Safe,Safe
+sound_db,40.0,0.0,0.0,0.0,100.0,Safe,Safe
+sound_db,50.0,0.0,0.0,0.0,100.0,Safe,Safe
+sound_db,55.0,0.0,0.0,0.0,100.0,Safe,Safe
+sound_db,60.0,0.0,0.0,0.0,100.0,Safe,Safe
+sound_db,65.0,0.0,1.0,0.0,99.0,Safe,Safe
+sound_db,70.0,3.0,5.0,0.0,92.0,Safe,Safe
+sound_db,80.0,10.0,16.0,0.0,74.0,Safe,Safe
+sound_db,90.0,34.0,7.0,0.0,59.0,Safe,Safe
+sound_db,100.0,40.0,5.0,0.0,55.0,Safe,Safe
+sound_db,110.0,40.0,5.0,0.0,55.0,Safe,Safe
+sound_db,120.0,40.0,5.0,0.0,55.0,Safe,Safe
+vibration_g,0.05,0.0,0.0,0.0,100.0,Safe,Safe
+vibration_g,0.1,0.0,0.0,0.0,100.0,Safe,Safe
+vibration_g,0.15,0.0,0.0,0.0,100.0,Safe,Safe
+vibration_g,0.2,0.0,0.0,0.0,100.0,Safe,Safe
+vibration_g,0.3,28.0,21.0,0.0,51.0,Safe,Safe
+vibration_g,0.5,26.0,23.0,0.0,51.0,Safe,Safe
+vibration_g,1.0,26.0,23.0,0.0,51.0,Safe,Safe
+vibration_g,2.0,33.0,38.0,0.0,29.0,High Risk,High Risk
+vibration_g,3.0,32.0,42.0,0.0,26.0,High Risk,High Risk
+vibration_g,4.0,21.0,53.0,0.0,26.0,High Risk,High Risk
+vibration_g,5.0,22.0,52.0,0.0,26.0,High Risk,High Risk
+vibration_g,6.0,17.0,57.0,0.0,26.0,High Risk,High Risk
